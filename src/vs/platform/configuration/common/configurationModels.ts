@@ -456,6 +456,8 @@ export class ConfigurationModelParser {
 	}
 
 	private shouldInclude(key: string, propertySchema: IConfigurationPropertySchema | undefined, excludedConfigurationProperties: IStringDictionary<IRegisteredConfigurationPropertySchema>, options: ConfigurationParseOptions): boolean {
+		const schema = propertySchema ?? excludedConfigurationProperties[key];
+
 		if (options.exclude?.includes(key)) {
 			return false;
 		}
@@ -464,7 +466,7 @@ export class ConfigurationModelParser {
 			return true;
 		}
 
-		if (options.skipRestricted && propertySchema?.restricted) {
+		if (options.skipRestricted && schema?.restricted) {
 			return false;
 		}
 
@@ -472,7 +474,6 @@ export class ConfigurationModelParser {
 			return false;
 		}
 
-		const schema = propertySchema ?? excludedConfigurationProperties[key];
 		const scope = schema ? typeof schema.scope !== 'undefined' ? schema.scope : ConfigurationScope.WINDOW : undefined;
 		if (scope === undefined || options.scopes === undefined) {
 			return true;

@@ -41,13 +41,26 @@ What it does:
   - `libxkbfile-dev`
 - runs:
   - `npm install --verbose`
-  - `npm run gulp transpile-client-esbuild transpile-extensions`
+  - a constrained-heap transpile step:
+    - `node --experimental-strip-types --max-old-space-size=4096 ./node_modules/gulp/bin/gulp.js transpile-client-esbuild transpile-extensions`
   - `npm run electron`
 - emits phase markers and per-phase logs
 - is safe to rerun:
   - completed phases are skipped unless `OPENHANDS_BENCHMARK_FORCE=1`
 
 This is intentionally procedural. The goal is to measure stock-sandbox bootstrap cost directly rather than forcing the agent to rediscover the setup path on every run.
+
+Why the helper does not use `npm run gulp` directly:
+
+- this repository's `package.json` defines `gulp` with `--max-old-space-size=8192`
+- that is reasonable on a large developer machine, but too aggressive for smaller sandbox limits
+- the helper runs gulp directly with a lower heap cap so stock-image benchmarking is less likely to OOM during transpilation
+
+The heap can be overridden with:
+
+```bash
+OPENHANDS_GULP_MAX_OLD_SPACE_SIZE_MB=6144 ./scripts/openhands-stock-bootstrap.sh
+```
 
 Logs and phase markers land under:
 

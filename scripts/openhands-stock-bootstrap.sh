@@ -9,6 +9,7 @@ run_id="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="${logs_dir}/${run_id}"
 summary_log="${run_dir}/summary.log"
 force="${OPENHANDS_BENCHMARK_FORCE:-0}"
+gulp_heap_mb="${OPENHANDS_GULP_MAX_OLD_SPACE_SIZE_MB:-4096}"
 
 mkdir -p "${state_dir}" "${run_dir}"
 ln -sfn "${run_dir}" "${logs_dir}/latest"
@@ -61,11 +62,12 @@ cd "${repo_root}"
 phase system_packages sudo apt-get update
 phase system_packages_install sudo apt-get install -y xvfb libkrb5-dev pkg-config libx11-dev libxkbfile-dev
 phase npm_install npm install --verbose
-phase transpile npm run gulp transpile-client-esbuild transpile-extensions
+phase transpile node --experimental-strip-types --max-old-space-size="${gulp_heap_mb}" ./node_modules/gulp/bin/gulp.js transpile-client-esbuild transpile-extensions
 phase electron npm run electron
 
 cat <<EOF | tee -a "${summary_log}"
 OPENHANDS_BENCHMARK_BOOTSTRAP complete=1 logs=${run_dir}
+Configured gulp heap: ${gulp_heap_mb} MB
 Next step:
   ./scripts/openhands-benchmark-verify.sh
 EOF

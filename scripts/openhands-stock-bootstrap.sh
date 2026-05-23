@@ -1,75 +1,71 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+benchmark_root="${OPENHANDS_BENCHMARK_ROOT:-${repo_root}/.openhands-benchmark}"
+state_dir="${benchmark_root}/state"
+logs_dir="${benchmark_root}/logs"
+run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+run_dir="${logs_dir}/${run_id}"
+summary_log="${run_dir}/summary.log"
+force="${OPENHANDS_BENCHMARK_FORCE:-0}"
 
-cd "${REPO_ROOT}"
+mkdir -p "${state_dir}" "${run_dir}"
+ln -sfn "${run_dir}" "${logs_dir}/latest"
 
-PACKAGES=(
-  libkrb5-dev
-  xvfb
-  pkg-config
-  libx11-dev
-  libxkbfile-dev
-)
-
-timestamp() {
-  date +%s
-}
-
-print_phase() {
-  local phase="$1"
-  local started_at="$2"
-  local ended_at="$3"
-  local elapsed=$((ended_at - started_at))
-  printf 'OPENHANDS_BENCHMARK_PHASE %s %ss\n' "${phase}" "${elapsed}"
-}
-
-run_with_timing() {
-  local phase="$1"
+phase() {
+  local phase_name="$1"
   shift
-  local started_at
-  local ended_at
-  started_at="$(timestamp)"
-  printf '\n==> %s\n' "${phase}"
-  "$@"
-  ended_at="$(timestamp)"
-  print_phase "${phase}" "${started_at}" "${ended_at}"
+
+  local marker="${state_dir}/${phase_name}.done"
+  local log_file="${run_dir}/${phase_name}.log"
+  local start_ts
+  local start_epoch
+  local end_ts
+  local end_epoch
+  local duration
+  local status
+
+  if [[ "${force}" != "1" && -f "${marker}" ]]; then
+    printf 'OPENHANDS_BENCHMARK_PHASE %s status=skipped reason=already_complete\n' "${phase_name}" | tee -a "${summary_log}"
+    return 0
+  fi
+
+  start_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  start_epoch="$(date -u +%s)"
+  printf 'OPENHANDS_BENCHMARK_PHASE %s status=started ts=%s\n' "${phase_name}" "${start_ts}" | tee -a "${summary_log}"
+
+  set +e
+  (
+    set -x
+    "$@"
+  ) > >(tee "${log_file}") 2>&1
+  status=$?
+  set -e
+
+  end_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  end_epoch="$(date -u +%s)"
+  duration="$(( end_epoch - start_epoch ))"
+
+  if [[ "${status}" -eq 0 ]]; then
+    touch "${marker}"
+    printf 'OPENHANDS_BENCHMARK_PHASE %s status=completed duration_s=%s finished_at=%s log=%s\n' "${phase_name}" "${duration}" "${end_ts}" "${log_file}" | tee -a "${summary_log}"
+  else
+    printf 'OPENHANDS_BENCHMARK_PHASE %s status=failed duration_s=%s finished_at=%s log=%s\n' "${phase_name}" "${duration}" "${end_ts}" "${log_file}" | tee -a "${summary_log}"
+    return "${status}"
+  fi
 }
 
-apt_prefix=()
-if command -v apt-get >/dev/null 2>&1; then
-  if [[ "${EUID}" -eq 0 ]]; then
-    apt_prefix=(apt-get)
-  elif command -v sudo >/dev/null 2>&1; then
-    apt_prefix=(sudo apt-get)
-  else
-    echo "apt-get is available but sudo is not; cannot install required packages" >&2
-    exit 1
-  fi
-fi
+cd "${repo_root}"
 
-if [[ "${#apt_prefix[@]}" -gt 0 ]]; then
-  run_with_timing system_packages "${apt_prefix[@]}" update
-  run_with_timing system_packages_install "${apt_prefix[@]}" install -y "${PACKAGES[@]}"
-else
-  echo "Skipping system package installation because apt-get is not available."
-fi
+phase system_packages sudo apt-get update
+phase system_packages_install sudo apt-get install -y xvfb libkrb5-dev pkg-config libx11-dev libxkbfile-dev
+phase npm_install npm install --verbose
+phase transpile npm run gulp transpile-client-esbuild transpile-extensions
+phase electron npm run electron
 
-if [[ -d node_modules ]]; then
-  echo "node_modules already exists; skipping npm install"
-else
-  run_with_timing npm_install npm install
-fi
-
-run_with_timing transpile npm run gulp transpile-client-esbuild transpile-extensions
-run_with_timing electron npm run electron
-
-cat <<'EOF'
-
-Bootstrap complete.
-
-Next verification command:
-xvfb-run -a ./scripts/test.sh --run src/vs/platform/configuration/test/common/configurationModels.test.ts --grep "excluded restricted properties"
+cat <<EOF | tee -a "${summary_log}"
+OPENHANDS_BENCHMARK_BOOTSTRAP complete=1 logs=${run_dir}
+Next step:
+  ./scripts/openhands-benchmark-verify.sh
 EOF
